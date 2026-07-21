@@ -76,23 +76,6 @@ README.md
 
 LICENSE
 ```
-
----
-
-# 📄 License
-
-This project is licensed under the MIT License.
-
----
-
-# 👨‍💻 Author
-
-Trần Văn Hoàng - hoangdtu01@gmail.com
-
-Vietnam - Korea University of Information and Communication Technology (VKU)
-
-GitHub
-
 https://github.com/hoangdtu01
 
 ```
