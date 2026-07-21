@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Smart Door Admin</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="admin-layout">
+      <aside class="sidebar">
+        <div class="logo-box">
+          <div class="logo-circle">AI</div>
+          <div>
+            <h2>Smart Door</h2>
+            <p>Face Recognition</p>
+          </div>
+        </div>
+
+        <nav class="menu">
+          <button class="menu-item active" onclick="showPage('register', this)">
+            Đăng kí khuôn mặt
+          </button>
+
+          <button class="menu-item" onclick="showPage('manage', this)">
+            Quản lý khuôn mặt
+          </button>
+
+          <button class="menu-item" onclick="showPage('logs', this)">
+            Nhật ký truy cập
+          </button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="admin-header">
+          <a class="home-btn" href="user.html">← Quay lại Home</a>
+
+          <div class="welcome-box">
+            <span>Chào mừng Admin</span>
+            <div class="avatar">A</div>
+          </div>
+        </header>
+
+        <section id="registerPage" class="page-section active-section">
+          <div class="page-title">
+            <h1>Đăng kí khuôn mặt</h1>
+            <p>
+              Canh khuôn mặt bằng camera realtime, sau đó chụp ảnh để đăng kí.
+            </p>
+          </div>
+
+          <div class="dashboard-grid">
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Camera Preview</h2>
+                <span class="live-badge">LIVE</span>
+              </div>
+
+              <img
+                id="stream"
+                class="camera-view"
+                src=""
+                alt="ESP32-CAM Stream"
+              />
+
+              <div class="small-info">
+                Stream URL: <span id="streamUrl">Loading...</span>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <h2>Thông tin khuôn mặt</h2>
+              </div>
+
+              <label>User ID</label>
+              <input type="text" id="userId" placeholder="VD: user001" />
+
+              <label>Tên người dùng</label>
+              <input type="text" id="name" placeholder="VD: Hoang Dong A" />
+
+              <button class="primary-btn" onclick="registerFromEsp32()">
+                Capture & Register
+              </button>
+
+              <div id="registerResult" class="alert muted">
+                Sẵn sàng đăng kí.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="managePage" class="page-section">
+          <div class="page-title">
+            <h1>Quản lý khuôn mặt</h1>
+            <p>Xem, tìm kiếm, chỉnh sửa hoặc xóa người dùng đã đăng kí.</p>
+          </div>
+
+          <div class="panel">
+            <div class="toolbar">
+              <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm kiếm theo tên hoặc User ID..."
+                oninput="renderUsers()"
+              />
+
+              <button class="secondary-btn" onclick="loadUsers()">
+                Refresh
+              </button>
+            </div>
+
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User ID</th>
+                    <th>Tên người dùng</th>
+                    <th>Ngày tạo</th>
+                    <th>Edit</th>
+                    <th>Delete</th>
+                  </tr>
+                </thead>
+
+                <tbody id="userTableBody">
+                  <tr>
+                    <td colspan="5">Loading...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="logsPage" class="page-section">
+          <div class="page-title">
+            <h1>Nhật ký truy cập</h1>
+            <p>Theo dõi lịch sử nhận diện và trạng thái truy cập.</p>
+          </div>
+
+          <div class="panel">
+            <div class="toolbar">
+              <button class="secondary-btn" onclick="loadLogs()">
+                Refresh Logs
+              </button>
+            </div>
+
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Thời gian</th>
+                    <th>User ID</th>
+                    <th>Tên</th>
+                    <th>Trạng thái</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+
+                <tbody id="logTableBody">
+                  <tr>
+                    <td colspan="5">Loading...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      // const API_BASE = "http://127.0.0.1:8000";
+      const API_BASE = "http://10.107.164.151:8000";
+
+      let usersCache = [];
+
+      function showPage(page, button) {
+        document.querySelectorAll(".page-section").forEach((section) => {
+          section.classList.remove("active-section");
+        });
+
+        document.querySelectorAll(".menu-item").forEach((item) => {
+          item.classList.remove("active");
+        });
+
+        if (page === "register") {
+          document
+            .getElementById("registerPage")
+            .classList.add("active-section");
+        }
+
+        if (page === "manage") {
+          document.getElementById("managePage").classList.add("active-section");
+          loadUsers();
+        }
+
+        if (page === "logs") {
+          document.getElementById("logsPage").classList.add("active-section");
+          loadLogs();
+        }
+
+        button.classList.add("active");
+      }
+
+      async function loadConfig() {
+        try {
+          const response = await fetch(API_BASE + "/config");
+          const data = await response.json();
+
+          if (data.success) {
+            document.getElementById("stream").src = data.stream_url;
+            document.getElementById("streamUrl").innerText = data.stream_url;
+          }
+        } catch (error) {
+          document.getElementById("streamUrl").innerText =
+            "Không tải được stream URL";
+        }
+      }
+
+      async function registerFromEsp32() {
+        const userId = document.getElementById("userId").value.trim();
+        const name = document.getElementById("name").value.trim();
+        const resultBox = document.getElementById("registerResult");
+
+        if (!userId || !name) {
+          resultBox.className = "alert error";
+          resultBox.innerText = "Vui lòng nhập User ID và tên người dùng.";
+          return;
+        }
+
+        resultBox.className = "alert muted";
+        resultBox.innerText = "Đang chụp ảnh từ ESP32-CAM và đăng kí...";
+
+        const formData = new FormData();
+        formData.append("user_id", userId);
+        formData.append("name", name);
+
+        try {
+          const response = await fetch(API_BASE + "/register-from-esp32", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            resultBox.className = "alert error";
+            resultBox.innerText = "Lỗi: " + data.detail;
+            return;
+          }
+
+          resultBox.className = "alert success";
+          resultBox.innerText =
+            "Đăng kí thành công: " + data.name + " (" + data.user_id + ")";
+
+          document.getElementById("userId").value = "";
+          document.getElementById("name").value = "";
+
+          loadUsers();
+        } catch (error) {
+          resultBox.className = "alert error";
+          resultBox.innerText = "Lỗi server: " + error;
+        }
+      }
+
+      async function loadUsers() {
+        try {
+          const response = await fetch(API_BASE + "/users");
+          const data = await response.json();
+
+          usersCache = data.users || [];
+          renderUsers();
+        } catch (error) {
+          document.getElementById("userTableBody").innerHTML = `
+                    <tr><td colspan="5">Không tải được danh sách user.</td></tr>
+                `;
+        }
+      }
+
+      function renderUsers() {
+        const tbody = document.getElementById("userTableBody");
+        const keyword =
+          document.getElementById("searchInput")?.value.toLowerCase() || "";
+
+        const filtered = usersCache.filter((user) => {
+          return (
+            user.user_id.toLowerCase().includes(keyword) ||
+            user.name.toLowerCase().includes(keyword)
+          );
+        });
+
+        if (filtered.length === 0) {
+          tbody.innerHTML = `
+                    <tr><td colspan="5">Không có dữ liệu phù hợp.</td></tr>
+                `;
+          return;
+        }
+
+        tbody.innerHTML = "";
+
+        filtered.forEach((user) => {
+          const tr = document.createElement("tr");
+
+          tr.innerHTML = `
+                    <td>${user.user_id}</td>
+                    <td>${user.name}</td>
+                    <td>${user.created_at || "-"}</td>
+                    <td>
+                        <button class="edit-btn" onclick="editUser('${user.user_id}', '${escapeQuotes(user.name)}')">
+                            EDIT
+                        </button>
+                    </td>
+                    <td>
+                        <button class="delete-btn" onclick="deleteUser('${user.user_id}')">
+                            DELETE
+                        </button>
+                    </td>
+                `;
+
+          tbody.appendChild(tr);
+        });
+      }
+
+      function escapeQuotes(text) {
+        return String(text).replace(/'/g, "\\'");
+      }
+
+      async function editUser(userId, oldName) {
+        const newName = prompt("Nhập tên mới:", oldName);
+
+        if (!newName || newName.trim() === "") {
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("name", newName.trim());
+
+        try {
+          const response = await fetch(API_BASE + "/users/" + userId, {
+            method: "PUT",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            alert(data.detail);
+            return;
+          }
+
+          loadUsers();
+        } catch (error) {
+          alert("Lỗi server: " + error);
+        }
+      }
+
+      async function deleteUser(userId) {
+        if (!confirm("Xóa user " + userId + "?")) {
+          return;
+        }
+
+        try {
+          const response = await fetch(API_BASE + "/users/" + userId, {
+            method: "DELETE",
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            alert(data.detail);
+            return;
+          }
+
+          loadUsers();
+        } catch (error) {
+          alert("Lỗi server: " + error);
+        }
+      }
+
+      async function loadLogs() {
+        const tbody = document.getElementById("logTableBody");
+
+        try {
+          const response = await fetch(API_BASE + "/access-logs?limit=50");
+          const data = await response.json();
+
+          const logs = data.logs || [];
+
+          if (logs.length === 0) {
+            tbody.innerHTML = `
+                        <tr><td colspan="5">Chưa có nhật ký truy cập.</td></tr>
+                    `;
+            return;
+          }
+
+          tbody.innerHTML = "";
+
+          logs.forEach((log) => {
+            let statusClass = "status-reject";
+
+            if (log.status === "ACCEPT") {
+              statusClass = "status-accept";
+            } else if (log.status === "LOW_CONFIDENCE_RETRY") {
+              statusClass = "status-retry";
+            }
+
+            const tr = document.createElement("tr");
+
+            tr.innerHTML = `
+                        <td>${log.created_at}</td>
+                        <td>${log.user_id || "-"}</td>
+                        <td>${log.name || "Unknown"}</td>
+                        <td><span class="status-pill ${statusClass}">${log.status}</span></td>
+                        <td>${log.score !== null ? Number(log.score).toFixed(4) : "-"}</td>
+                    `;
+
+            tbody.appendChild(tr);
+          });
+        } catch (error) {
+          tbody.innerHTML = `
+                    <tr><td colspan="5">Không tải được nhật ký truy cập.</td></tr>
+                `;
+        }
+      }
+
+      loadConfig();
+      loadUsers();
+      loadLogs();
+
+      setInterval(loadLogs, 5000);
+    </script>
+  </body>
+</html>

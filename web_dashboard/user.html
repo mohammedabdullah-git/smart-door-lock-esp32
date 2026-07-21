@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Smart Door - User</title>
+    <link rel="stylesheet" href="user.css" />
+  </head>
+  <body>
+    <header class="user-header">
+      <div class="brand">
+        <div class="brand-icon">AI</div>
+        <div>
+          <h1>Smart Door</h1>
+          <p>Face Recognition Access System</p>
+        </div>
+      </div>
+
+      <button class="admin-login-btn" onclick="openLoginModal()">
+        Admin Login
+      </button>
+    </header>
+
+    <main class="user-main">
+      <section class="camera-card">
+        <div class="card-header">
+          <div>
+            <h2>ESP32-CAM Realtime</h2>
+            <p>Đưa khuôn mặt vào camera. Hệ thống sẽ tự động nhận diện.</p>
+          </div>
+
+          <span class="live-badge">LIVE</span>
+        </div>
+
+        <img id="stream" class="camera-view" src="" alt="ESP32-CAM Stream" />
+
+        <div class="stream-url">
+          <span>Stream URL:</span>
+          <code id="streamUrl">Loading...</code>
+        </div>
+      </section>
+
+      <section class="status-card">
+        <h2>Recognition Result</h2>
+
+        <div id="status" class="status-box waiting">Waiting...</div>
+
+        <div class="info-grid">
+          <div class="info-item">
+            <span>Matched User</span>
+            <strong id="matchedUser">-</strong>
+          </div>
+
+          <div class="info-item">
+            <span>Cosine Score</span>
+            <strong id="score">-</strong>
+          </div>
+
+          <div class="info-item">
+            <span>Access</span>
+            <strong id="access">-</strong>
+          </div>
+
+          <div class="info-item">
+            <span>ESP32 Command</span>
+            <strong id="esp32Command">-</strong>
+          </div>
+        </div>
+
+        <div id="message" class="message-box">
+          Hệ thống sẽ tự động nhận diện mỗi 2 giây.
+        </div>
+
+        <div class="button-row">
+          <button class="primary-btn" onclick="recognizeOnce()">
+            Recognize Now
+          </button>
+
+          <button
+            class="secondary-btn"
+            id="autoButton"
+            onclick="toggleAutoRecognize()"
+          >
+            Stop Auto Recognize
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <div id="loginModal" class="modal-overlay">
+      <div class="login-modal">
+        <h2>Admin Login</h2>
+        <p>Đăng nhập để truy cập trang quản trị.</p>
+
+        <label>Account</label>
+        <input type="text" id="adminAccount" />
+
+        <label>Password</label>
+        <input type="password" id="adminPassword" />
+
+        <div id="loginMessage" class="login-message"></div>
+
+        <div class="modal-actions">
+          <button class="secondary-btn" onclick="closeLoginModal()">
+            Cancel
+          </button>
+          <button class="primary-btn" onclick="loginAdmin()">Login</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Nếu chạy trực tiếp trên máy tính có thể dùng:
+      // const API_BASE = "http://127.0.0.1:8000";
+
+      // Nếu dùng điện thoại chung WiFi, dùng IP LAN của máy tính:
+      const API_BASE = "http://10.107.164.151:8000";
+
+      const AUTO_INTERVAL_MS = 2000;
+      const DEFAULT_COOLDOWN_SECONDS = 8;
+
+      let autoRecognize = true;
+      let recognizeTimer = null;
+      let isRecognizing = false;
+      let isCooldown = false;
+      let cooldownTimer = null;
+
+      function getElements() {
+        return {
+          statusBox: document.getElementById("status"),
+          matchedUser: document.getElementById("matchedUser"),
+          score: document.getElementById("score"),
+          access: document.getElementById("access"),
+          message: document.getElementById("message"),
+          esp32Command: document.getElementById("esp32Command"),
+        };
+      }
+
+      function clearResultInfo() {
+        const { matchedUser, score, access, esp32Command } = getElements();
+
+        matchedUser.innerText = "-";
+        score.innerText = "-";
+        access.innerText = "-";
+        esp32Command.innerText = "-";
+      }
+
+      function setWaiting(messageText = "Đưa khuôn mặt vào camera. Hệ thống đang chờ nhận diện.") {
+        const { statusBox, message } = getElements();
+
+        statusBox.className = "status-box waiting";
+        statusBox.innerText = "WAITING";
+
+        message.className = "message-box";
+        message.innerText = messageText;
+      }
+
+      function setNoFace(messageText = "Chưa phát hiện khuôn mặt. Vui lòng đưa mặt vào camera.") {
+        const { statusBox, message } = getElements();
+
+        statusBox.className = "status-box waiting";
+        statusBox.innerText = "WAITING";
+
+        message.className = "message-box";
+        message.innerText = messageText;
+
+        clearResultInfo();
+      }
+
+      function parseRemainingSeconds(text) {
+        if (!text) {
+          return null;
+        }
+
+        const match = String(text).match(/([0-9]+(?:\.[0-9]+)?)\s*giây|([0-9]+(?:\.[0-9]+)?)\s*seconds/i);
+
+        if (!match) {
+          return null;
+        }
+
+        const value = match[1] || match[2];
+        return Math.ceil(Number(value));
+      }
+
+      function startCooldown(seconds = DEFAULT_COOLDOWN_SECONDS) {
+        const { statusBox, message, esp32Command } = getElements();
+
+        if (cooldownTimer !== null) {
+          clearInterval(cooldownTimer);
+        }
+
+        isCooldown = true;
+        let remaining = Math.max(1, Math.ceil(seconds));
+
+        statusBox.className = "status-box accept";
+        statusBox.innerText = "COOLDOWN";
+        esp32Command.innerText = "Cooldown";
+
+        message.className = "message-box success";
+        message.innerText =
+          "Đã xác thực và mở khóa. Chờ " +
+          remaining +
+          " giây trước khi nhận diện lại.";
+
+        cooldownTimer = setInterval(() => {
+          remaining -= 1;
+
+          if (remaining > 0) {
+            statusBox.className = "status-box accept";
+            statusBox.innerText = "COOLDOWN";
+
+            message.className = "message-box success";
+            message.innerText =
+              "Đã xác thực và mở khóa. Chờ " +
+              remaining +
+              " giây trước khi nhận diện lại.";
+          } else {
+            clearInterval(cooldownTimer);
+            cooldownTimer = null;
+            isCooldown = false;
+
+            clearResultInfo();
+            setWaiting("Sẵn sàng nhận diện lại. Vui lòng đưa khuôn mặt vào camera.");
+          }
+        }, 1000);
+      }
+
+      async function loadConfig() {
+        try {
+          const response = await fetch(API_BASE + "/config");
+          const data = await response.json();
+
+          if (data.success) {
+            document.getElementById("stream").src = data.stream_url;
+            document.getElementById("streamUrl").innerText = data.stream_url;
+          }
+        } catch (error) {
+          document.getElementById("streamUrl").innerText = "Cannot load config";
+        }
+      }
+
+      async function recognizeOnce() {
+        if (isRecognizing || isCooldown) {
+          return;
+        }
+
+        isRecognizing = true;
+
+        const {
+          statusBox,
+          matchedUser,
+          score,
+          access,
+          message,
+          esp32Command,
+        } = getElements();
+
+        try {
+          const response = await fetch(API_BASE + "/auto-verify-from-esp32", {
+            method: "POST",
+          });
+
+          let data = {};
+
+          try {
+            data = await response.json();
+          } catch (error) {
+            data = {};
+          }
+
+          if (!response.ok) {
+            const detail = String(data.detail || "");
+
+            // Trong hệ thống tự động, "No face detected" là trạng thái bình thường,
+            // không nên hiển thị ERROR đỏ.
+            if (
+              detail.toLowerCase().includes("no face") ||
+              detail.toLowerCase().includes("face detected") ||
+              detail.toLowerCase().includes("no face detected")
+            ) {
+              setNoFace("Chưa phát hiện khuôn mặt. Vui lòng đưa mặt vào camera.");
+              isRecognizing = false;
+              return;
+            }
+
+            statusBox.className = "status-box reject";
+            statusBox.innerText = "ERROR";
+
+            message.className = "message-box error";
+            message.innerText = detail || "Unknown error";
+
+            isRecognizing = false;
+            return;
+          }
+
+          if (data.stage === "NO_FACE" || data.stage === "NO_FACE_KEEP_CHALLENGE") {
+            setNoFace(data.message || "Chưa phát hiện khuôn mặt. Vui lòng đưa mặt vào camera.");
+          }
+
+          else if (data.stage === "SUCCESS_PAUSE") {
+            const seconds =
+              parseRemainingSeconds(data.message) ||
+              data.unlock?.cooldown_seconds ||
+              DEFAULT_COOLDOWN_SECONDS;
+
+            startCooldown(seconds);
+          }
+
+          else if (data.stage === "CHALLENGE_CREATED") {
+            statusBox.className = "status-box waiting";
+            statusBox.innerText = "CHALLENGE";
+
+            clearResultInfo();
+
+            message.className = "message-box warning";
+            message.innerText = data.message;
+          }
+
+          else if (data.stage === "CHALLENGE_WAITING") {
+            statusBox.className = "status-box retry";
+            statusBox.innerText = "VERIFYING";
+
+            clearResultInfo();
+
+            message.className = "message-box warning";
+            message.innerText =
+              data.message + " | Hướng hiện tại: " + data.direction;
+          }
+
+          else if (data.stage === "CHALLENGE_PASSED_WAIT_CENTER") {
+            statusBox.className = "status-box retry";
+            statusBox.innerText = "LOOK CENTER";
+
+            clearResultInfo();
+
+            message.className = "message-box warning";
+            message.innerText =
+              data.message + " | Hướng hiện tại: " + data.direction;
+          }
+
+          else if (data.stage === "CHALLENGE_TIMEOUT") {
+            statusBox.className = "status-box reject";
+            statusBox.innerText = "TIMEOUT";
+
+            clearResultInfo();
+
+            message.className = "message-box error";
+            message.innerText = data.message;
+          }
+
+          else if (data.stage === "RECOGNITION_DONE") {
+            const recognition = data.recognition;
+
+            if (recognition && typeof recognition.best_score === "number") {
+              score.innerText = recognition.best_score.toFixed(4);
+            } else {
+              score.innerText = "-";
+            }
+
+            if (recognition && recognition.matched_user) {
+              matchedUser.innerText =
+                recognition.matched_user.name +
+                " (" +
+                recognition.matched_user.user_id +
+                ")";
+            } else {
+              matchedUser.innerText = "-";
+            }
+
+            if (recognition && recognition.access === true) {
+              statusBox.className = "status-box accept";
+              statusBox.innerText = "ACCEPT";
+
+              access.innerText = "Granted";
+
+              if (data.unlock && data.unlock.sent) {
+                esp32Command.innerText = "/unlock";
+              } else if (data.unlock && data.unlock.mode === "COOLDOWN") {
+                esp32Command.innerText = "Cooldown";
+              } else {
+                esp32Command.innerText = "Not sent";
+              }
+
+              message.className = "message-box success";
+              message.innerText = "Xác thực thành công. Khóa đã được mở.";
+
+              const seconds =
+                data.unlock?.cooldown_seconds ||
+                parseRemainingSeconds(data.unlock?.message) ||
+                DEFAULT_COOLDOWN_SECONDS;
+
+              setTimeout(() => {
+                startCooldown(seconds);
+              }, 1200);
+            }
+
+            else if (
+              recognition &&
+              recognition.status === "LOW_CONFIDENCE_RETRY"
+            ) {
+              statusBox.className = "status-box retry";
+              statusBox.innerText = "LOW CONFIDENCE";
+
+              access.innerText = "Denied";
+              esp32Command.innerText = "-";
+
+              message.className = "message-box warning";
+              message.innerText =
+                "Độ tin cậy thấp. Vui lòng nhìn rõ vào camera và thử lại.";
+            }
+
+            else {
+              statusBox.className = "status-box reject";
+              statusBox.innerText = "REJECT";
+
+              access.innerText = "Denied";
+              esp32Command.innerText = "-";
+
+              message.className = "message-box error";
+              message.innerText = "Từ chối truy cập.";
+            }
+          }
+
+          else {
+            statusBox.className = "status-box waiting";
+            statusBox.innerText = data.stage || "WAITING";
+
+            message.className = "message-box";
+            message.innerText = data.message || "Đang xác thực...";
+          }
+        } catch (error) {
+          statusBox.className = "status-box reject";
+          statusBox.innerText = "SERVER ERROR";
+
+          message.className = "message-box error";
+          message.innerText = error;
+        }
+
+        isRecognizing = false;
+      }
+
+      function startAutoRecognize() {
+        if (recognizeTimer !== null) {
+          clearInterval(recognizeTimer);
+        }
+
+        recognizeTimer = setInterval(() => {
+          if (autoRecognize) {
+            recognizeOnce();
+          }
+        }, AUTO_INTERVAL_MS);
+      }
+
+      function toggleAutoRecognize() {
+        autoRecognize = !autoRecognize;
+
+        const button = document.getElementById("autoButton");
+
+        if (autoRecognize) {
+          button.innerText = "Stop Auto Recognize";
+          recognizeOnce();
+        } else {
+          button.innerText = "Start Auto Recognize";
+        }
+      }
+
+      function openLoginModal() {
+        document.getElementById("loginModal").classList.add("show");
+        document.getElementById("loginMessage").innerText = "";
+        document.getElementById("adminAccount").value = "";
+        document.getElementById("adminPassword").value = "";
+      }
+
+      function closeLoginModal() {
+        document.getElementById("loginModal").classList.remove("show");
+      }
+
+      function loginAdmin() {
+        const account = document.getElementById("adminAccount").value.trim();
+        const password = document.getElementById("adminPassword").value.trim();
+        const loginMessage = document.getElementById("loginMessage");
+
+        if (account === "admin" && password === "123") {
+          loginMessage.className = "login-message success-text";
+          loginMessage.innerText = "Login success. Redirecting...";
+
+          setTimeout(() => {
+            window.location.href = "admin.html";
+          }, 500);
+        } else {
+          loginMessage.className = "login-message error-text";
+          loginMessage.innerText = "Sai tài khoản hoặc mật khẩu.";
+        }
+      }
+
+      loadConfig();
+      setWaiting();
+      startAutoRecognize();
+    </script>
+  </body>
+</html>

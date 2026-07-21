@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+scrfd_env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Dataset
+arcface_torch/dataset_images_1000/
+arcface_torch/pretrained/
+arcface_torch/work_dirs/
+
+# Models
+*.pth
+*.pt
+*.onnx
