@@ -76,7 +76,3 @@ README.md
 
 LICENSE
 ```
-https://github.com/hoangdtu01
-
-```
-```
